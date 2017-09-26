@@ -3,10 +3,19 @@
 
 #include <iostream>
 #include <bitset>
+#include <string>
 
 /*
 So, A GOST. http://www.certisfera.ru/uploads/28147-89.pdf
 */
+
+/**
+Performs circular shift on 11 positions
+*/
+inline std::bitset<32> Rot11(std::bitset<32> Val)
+{
+	return (Val << 11) | (Val >> 21);
+}
 
 //Required structures
 struct FourByte {
@@ -20,15 +29,47 @@ struct FourByte {
 	}
 	bool operator!=(const FourByte& other) { return !(*this == other); }
 
+
+	FourByte(std::bitset<32> bits) {
+		byte[0] = (bits & std::bitset<32>(0xFF)).to_ullong();
+		byte[1] = ((bits & (std::bitset<32>(0xFF) << 8)) >> 8).to_ullong();
+		byte[2] = ((bits & (std::bitset<32>(0xFF) << 16 )) >> 16).to_ullong();
+		byte[3] = ((bits & (std::bitset<32>(0xFF) << 24 )) >> 24).to_ullong();
+	}
+
+	std::bitset<32> toBitset() {
+
+		return std::bitset<32>((byte[0]) | (byte[1] << 8) | (byte[2] << 16) | (byte[3] << 24));
+	}
+	
 };
 struct EightChar {
 	unsigned char byte[8];
 };
 struct KeyHolder {
-	FourByte X[8];
+	std::bitset<32> X[8];
 };
 struct DataBlock {
 	FourByte Data[2];
+
+	DataBlock() {}
+	DataBlock(std::string Str)
+	{
+		for (int i = 0; i < 8; i++)
+		{
+			Data[i / 4].byte[i % 4] = Str[i];
+		}
+	}
+
+	std::string ToString()
+	{
+		std::string str;
+		for (int i = 0; i < 8; i++)
+		{
+			str += Data[i / 4].byte[i % 4];
+		}
+		return str;
+	}
 };
 
 class ReplaceSubBlock {
@@ -161,17 +202,99 @@ private:
 	KeyHolder Key;
 
 public:
+
+	void SetKey(KeyHolder NewKey)
+	{
+		Key = NewKey;
+	}
+	void SetValueInSubBlockofRB(unsigned char Value, int subblock, int position)
+	{
+		RB.SetValueInSubBlock(Value, subblock, position);
+	}
+
+	DataBlock InverseDataBlock(DataBlock Data)
+	{
+		DataBlock InvData;
+		std::bitset<32> N1, N2;
+		N1 = Data.Data[0].toBitset();
+		N2 = Data.Data[1].toBitset();
+
+		std::bitset<32> RetN1, RetN2;
+		for (int i = 0; i < 32; i++)
+		{
+			RetN1[i] = N1[31 - i];
+			RetN2[i] = N2[31 - i];
+		}
+		InvData.Data[0] = RetN1;
+		InvData.Data[1] = RetN2;
+		return InvData;
+	}
+
+	/**!
+	Performs one round of cipher.
+	\param[in] Data. Values of N1 and N2 registers
+	\param[in] KeyPart What key part should be used. Range:0-7; More about it in GOST
+	\param[in] LastCycle. In last cycle, Result of calculations should be written in N2, leaving N1 unchanged. In every other cycle, N1 get's the values, and it's previous value becames filling of N2
+	*/
+	DataBlock DoRound(DataBlock Data, int KeyPart, bool LastCycle)
+	{
+		//KeyPart and first part of data is added by modulo 2^32.
+		std::bitset<32> CM1 = Data.Data[0].toBitset().to_ullong() + Key.X[0].to_ullong();//Hopefully, this will do as 2^32 modulo addition.
+																			  //Resuly of addition get passed through ReplaceBlock
+		auto ReplaceResult = RB.DoReplace(FourByte(CM1));
+		//Then it get shifted by 11 to the most significant bits
+		auto R = Rot11(ReplaceResult.toBitset());
+		//And then the result get's bitwise modulo 2 added with second part of InvData
+		auto CM2 = R^Data.Data[1].toBitset();
+		if (!LastCycle)
+		{
+		//Old filling of first part of InvDTB is written to a second part
+		Data.Data[1] = Data.Data[0];
+		//While value of CM2 is became filling of first part of InvDTB
+		Data.Data[0] = CM2;
+		}
+		else
+		{//In last cycle, result it inserted in N2. N1 leaves unchanged
+			Data.Data[1] = CM2;
+		}
+		return Data;
+	}
 	
 	DataBlock DoCipher(DataBlock Data)
 	{
 		//Invert input DataBlock
-		DataBlock InvData;
-		for (int i = 0; i = 32; i++)
-		{
-			InvData.Data[0].byte[(i)/8]
+		auto InvDTB = InverseDataBlock(Data);
+
+		for(int i = 0; i < 24; i++)
+		{//Through 1st up to 24th round,  Keys cyclically goes from 0 to 7
+			InvDTB = DoRound(InvDTB, i % 8, false);
 		}
+		for (int i = 7; i > 0; i--)
+		{//Through 24st up to 33th round,  Keys goes from 7 to 1
+			InvDTB = DoRound(InvDTB, i, false);
+		}
+		//32th round goes with 0th part of a key, and with a flag, that it's a last round
+		InvDTB = DoRound(InvDTB, 32, true);
+		
+		return InvDTB;
 	}
 
+	DataBlock DoDecipher(DataBlock Data)
+	{
+		//Invert input DataBlock
+		auto InvDTB = InverseDataBlock(Data);
+
+		for (int i = 0; i < 8; i++)
+		{//Through 1st up to 8th round,  Keys cyclically goes from 0 to 8
+			InvDTB = DoRound(InvDTB, i % 8, false);
+		}
+
+		for (int i = 0; i < 24; i++)
+		{//Through 9st up to 32th round,  Keys cyclically goes from 8 to 0
+			InvDTB = DoRound(InvDTB, 7-(i % 8), false);
+		}
+		return InvDTB;
+	}
 };
 
 /**!
@@ -260,7 +383,22 @@ int main()
 	assert(TestCase2());
 	assert(TestCase3());
 
-
+	GOST28147 Cipher;
+	DataBlock DBL("gribheox");
+	//Set identity mapping in SubBlocks
+	/*for (int i = 0; i < 8; i++)
+	{
+		for (int j = 0; j < 16; j++)
+		{
+			Cipher.SetValueInSubBlockofRB((unsigned char)j, i, j);
+		}
+	}*/
+		
+	printf("ORIGINAL  : %s\n", DBL.ToString().c_str());
+	auto CipherText = Cipher.DoCipher(DBL);
+	printf("CIPHERTEXT: %s\n", CipherText.ToString().c_str());
+	auto Decipher = Cipher.DoDecipher(CipherText);
+	printf("DECIPHER  : %s\n", Decipher.ToString().c_str());
     return 0;
 }
 
