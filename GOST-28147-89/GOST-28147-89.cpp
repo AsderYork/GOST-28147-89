@@ -17,6 +17,16 @@ inline std::bitset<32> Rot11(std::bitset<32> Val)
 	return (Val << 11) | (Val >> 21);
 }
 
+std::string GetRandomString(int size)
+{
+	std::string Str;
+	for (int i = 0; i < size; i++)
+	{
+		Str += (unsigned char)(rand() % 256);
+	}
+	return Str;
+}
+
 //Required structures
 struct FourByte {
 	unsigned char byte[4];
@@ -48,6 +58,31 @@ struct EightChar {
 };
 struct KeyHolder {
 	std::bitset<32> X[8];
+	KeyHolder() {};
+	KeyHolder(std::string Str)
+	{
+		FourByte Tmp;
+		for (int i = 0; i < 8; i++)
+		{
+			Tmp.byte[0] = Str[i * 4 + 0];
+			Tmp.byte[1] = Str[i * 4 + 1];
+			Tmp.byte[2] = Str[i * 4 + 2];
+			Tmp.byte[3] = Str[i * 4 + 3];
+			X[i] = Tmp.toBitset();
+		}
+	}
+	std::string toStr()
+	{
+		std::string Str;
+		for (int i = 0; i < 8; i++)
+		{
+			Str += FourByte(X[i]).byte[0];
+			Str += FourByte(X[i]).byte[1];
+			Str += FourByte(X[i]).byte[2];
+			Str += FourByte(X[i]).byte[3];
+		}
+		return Str;
+	}
 };
 struct DataBlock {
 	FourByte Data[2];
@@ -98,6 +133,13 @@ public:
 			Value = Value << 4;
 			//It also means, that Every t+1'th value should be located in a t'th element of a table
 			positon--;
+			//Clear previous values, if there were any. Leaving only first part
+			Table[positon / 2] &= 0xf;
+		}
+		else
+		{
+			//Clear previous values, if there were any. Leaving only second part
+			Table[positon / 2] &= 0xf0;
 		}
 
 		Table[positon / 2] |= Value;
@@ -207,6 +249,7 @@ public:
 	{
 		Key = NewKey;
 	}
+	KeyHolder getKey() { return Key; }
 	void SetValueInSubBlockofRB(unsigned char Value, int subblock, int position)
 	{
 		RB.SetValueInSubBlock(Value, subblock, position);
@@ -222,8 +265,12 @@ public:
 		std::bitset<32> RetN1, RetN2;
 		for (int i = 0; i < 32; i++)
 		{
-			RetN1[i] = N1[31 - i];
-			RetN2[i] = N2[31 - i];
+			//RetN1[i] = N1[31 - i];
+			//RetN2[i] = N2[31 - i];
+
+			RetN1[i] = N1[i];
+			RetN2[i] = N2[i];
+
 		}
 		InvData.Data[0] = RetN1;
 		InvData.Data[1] = RetN2;
@@ -239,13 +286,14 @@ public:
 	DataBlock DoRound(DataBlock Data, int KeyPart, bool LastCycle)
 	{
 		//KeyPart and first part of data is added by modulo 2^32.
-		std::bitset<32> CM1 = Data.Data[0].toBitset().to_ullong() + Key.X[0].to_ullong();//Hopefully, this will do as 2^32 modulo addition.
+		std::bitset<32> CM1 = Data.Data[0].toBitset().to_ullong() + Key.X[KeyPart].to_ullong();//Hopefully, this will do as 2^32 modulo addition.
 																			  //Resuly of addition get passed through ReplaceBlock
 		auto ReplaceResult = RB.DoReplace(FourByte(CM1));
 		//Then it get shifted by 11 to the most significant bits
+
 		auto R = Rot11(ReplaceResult.toBitset());
 		//And then the result get's bitwise modulo 2 added with second part of InvData
-		auto CM2 = R^Data.Data[1].toBitset();
+		auto CM2 = R^Data.Data[1].toBitset();		
 		if (!LastCycle)
 		{
 		//Old filling of first part of InvDTB is written to a second part
@@ -259,6 +307,8 @@ public:
 		}
 		return Data;
 	}
+
+	
 	
 	DataBlock DoCipher(DataBlock Data)
 	{
@@ -274,7 +324,7 @@ public:
 			InvDTB = DoRound(InvDTB, i, false);
 		}
 		//32th round goes with 0th part of a key, and with a flag, that it's a last round
-		InvDTB = DoRound(InvDTB, 32, true);
+		InvDTB = DoRound(InvDTB, 0, true);
 		
 		return InvDTB;
 	}
@@ -289,13 +339,45 @@ public:
 			InvDTB = DoRound(InvDTB, i % 8, false);
 		}
 
-		for (int i = 0; i < 24; i++)
-		{//Through 9st up to 32th round,  Keys cyclically goes from 8 to 0
+		for (int i = 0; i < 23; i++)
+		{//Through 9st up to 31th round,  Keys cyclically goes from 8 to 0
 			InvDTB = DoRound(InvDTB, 7-(i % 8), false);
 		}
+		//And the last one
+		InvDTB = DoRound(InvDTB, 0, true);
+
 		return InvDTB;
 	}
+
+	void SetReplaceBlockFromString(std::string Str)
+	{
+		for(int i = 0; i < 8; i++)
+		{
+			for (int j = 0; j < 16; j++)
+			{
+				std::string tmpStr = "0x0";
+				tmpStr += Str[i * 16 + j];
+				
+				RB.SetValueInSubBlock((unsigned char) std::strtol(tmpStr.c_str(), nullptr, 16), i, j);
+			}
+		}
+	}
+
 };
+
+void SetRFC4357ReplaceBlock(GOST28147& GOST)
+{
+	GOST.SetReplaceBlockFromString(
+		"4A92D80E6B1C7F53" 
+		"EB4C6DFA23810759" 
+		"581DA342EFC7609B"
+		"7DA1089FE46CB253"
+		"6C715FD84A9E03B2"
+		"4BA0721D36859CFE"
+		"DB413F590AE7682C"
+		"1FD057A4923E6B8C"	
+	);
+}
 
 /**!
 \test Tests ReplaceSubBlock. Checks that every value in a table can be set, and that it's exactly that will be returned by \c get.
@@ -317,6 +399,31 @@ bool TestCase1()
 			return false;
 		}
 
+	}
+	return true;
+}
+
+/**!
+\test Tests ReplaceSubBlock. Checks random access 1000 times \c get.
+Fills random position with random value, and then retrives it.
+It's a positive test
+*/
+bool TestCase4()
+{
+
+	ReplaceSubBlock Sub1;
+	unsigned char TestVal = 0;
+	int Pos = 0;
+	for (int i = 0; i < 1000; i++)
+	{
+		TestVal = rand() % 16;
+		Pos = rand() % 16;
+		Sub1.fillTable(TestVal, Pos);
+		if (Sub1.Get(Pos) != TestVal)
+		{
+			printf("TestCase4:ReplaceSubBlock.get returns not what it's suppose to!");
+			return false;
+		}
 	}
 	return true;
 }
@@ -376,24 +483,82 @@ bool TestCase3()
 	return true;
 }
 
+/**!
+\test Tests GOST28147. Checks if it can correctly encrypt and decrypt values.
+It fills ReplaceBlock with values from RFC4357, sets a key(Random string), and encrypts/decrypts other random string.
+It's a positive test
+*/
+bool TestCase5()
+{
+	GOST28147 Cipher;
+	std::string Key = GetRandomString(4 * 8);
+	Cipher.SetKey(KeyHolder(Key));
+
+	SetRFC4357ReplaceBlock(Cipher);
+
+	std::string Data = GetRandomString(4 * 2);
+	DataBlock DBL(Data);
+	if (Cipher.DoDecipher(Cipher.DoCipher(DBL)).ToString() != DBL.ToString())
+	{
+		printf("Fail! key:%s, Data:%s", Cipher.getKey().toStr().c_str(), DBL.ToString().c_str());
+		return false;
+	}
+	return true;
+}
+
+/**!
+\test Tests GOST28147. Checks if it actually uses key
+It fills ReplaceBlock with values from RFC4357, sets a key(Random string), and encrypts random block of data. Then it changes key, and cheks, that
+result of decryption is different from original block.
+It's a negative test
+\warning. key-space is 2^256 while datablocks only 2^64, so there are chances, that random block of data can be encrypted/decrypted with two different keys, so this test can be false-positive
+*/
+bool TestCase6()
+{
+	GOST28147 Cipher;
+	std::string Key = GetRandomString(4 * 8);
+	Cipher.SetKey(KeyHolder(Key));
+
+	SetRFC4357ReplaceBlock(Cipher);
+
+	std::string Data = GetRandomString(4 * 2);
+	DataBlock DBL(Data);
+
+	auto EncRes = Cipher.DoCipher(DBL);
+	std::string NewKey = GetRandomString(4 * 8);
+	while (NewKey == Key) { NewKey = GetRandomString(4 * 8); }//Make shure that keys do differ
+	Cipher.SetKey(NewKey);
+	auto DecRes = Cipher.DoDecipher(EncRes);
+
+	if (DecRes.ToString() == DBL.ToString())
+	{
+		printf("Fail! Data have been deciphered with different key!\nkey:%s\nNewKey:%s\nData:%s", Key.c_str(), NewKey.c_str(), DBL.ToString().c_str());
+		printf("Warning! This test can be false-positive! Check documentation.");
+		return false;
+	}
+
+	
+	return true;
+}
+
+
 int main()
 {
 	//Tests
 	assert(TestCase1());
 	assert(TestCase2());
 	assert(TestCase3());
+	assert(TestCase4());
+	assert(TestCase5());
+	assert(TestCase6());
 
 	GOST28147 Cipher;
 	DataBlock DBL("gribheox");
-	//Set identity mapping in SubBlocks
-	/*for (int i = 0; i < 8; i++)
-	{
-		for (int j = 0; j < 16; j++)
-		{
-			Cipher.SetValueInSubBlockofRB((unsigned char)j, i, j);
-		}
-	}*/
-		
+
+	SetRFC4357ReplaceBlock(Cipher);	
+	Cipher.SetKey(KeyHolder("1324adewxhvj8469kjgyxcshujgvjuyd"));
+	printf("KEY:%s\n", Cipher.getKey().toStr().c_str());
+	
 	printf("ORIGINAL  : %s\n", DBL.ToString().c_str());
 	auto CipherText = Cipher.DoCipher(DBL);
 	printf("CIPHERTEXT: %s\n", CipherText.ToString().c_str());
