@@ -4,7 +4,8 @@
 #include <iostream>
 #include <bitset>
 #include <string>
-
+#include <conio.h>
+#include <stdio.h>
 /*
 So, A GOST. http://www.certisfera.ru/uploads/28147-89.pdf
 */
@@ -767,40 +768,145 @@ bool TestCase6()
 	return true;
 }
 
+void SetReplaceBlockInterface(GOST28147& Gost)
+{
+	SetRFC4357ReplaceBlock(Gost);	
+	printf("ReplaceBlock is set according to RFC4357!\n");
+}
+
+void SetReplaceBlockFromStringInterface(GOST28147& Gost)
+{
+	printf("Write down a table. From left to right. From top to bottom. Using upper-case Letters(Hexdecimal representations of values in a table).\n");
+	
+	std::string Input;
+	std::cin >> Input;
+	Gost.SetReplaceBlockFromString(Input);
+	
+}
+
+void SetKeyInterface(GOST28147& Gost)
+{
+	printf("Write 128bit key, represented by ASCII string\n");
+	std::string Input;
+	std::cin >> Input;
+	Gost.SetKey(Input);
+}
+
+void EncryptSRInterface(GOST28147& Gost)
+{
+	printf("Write string of any lenght, to be encrypted with SR-mode\n");
+	std::string Input;
+	std::cin >> Input;
+	printf("Ciphertext:%s\n", Gost.SRMode_Encode(Input).c_str());
+}
+
+void DecryptSRInterface(GOST28147& Gost)
+{
+	printf("Write ciphertext of any lenght, to be decrypted with SR-mode\n");
+	std::string Input;
+	std::cin >> Input;
+	printf("Plaintext:%s\n", Gost.SRMode_Decode(Input).c_str());
+}
+
+void GammaInterface(GOST28147& Gost)
+{
+	printf("Write 64bit in ASCII representation of Initial Vector, to be used in Gamma-encryption\n");
+	std::string Gamma;
+	std::cin >> Gamma;
+	
+	printf("Write data of any lenght, to be decrypted with Gamma-mode\n");
+	std::string Data;
+	std::cin >> Data;
+
+	printf("Gammed:%s\n", Gost.Gammate(Data, DataBlock(Gamma)).c_str());
+}
+
+void ChainGammaEncryptInterface(GOST28147& Gost)
+{
+	printf("Write 64bit in ASCII representation of Initial Vector, to be used in ChainGamma-encryption\n");
+	std::string Gamma;
+	std::cin >> Gamma;
+
+	printf("Write text of any lenght, to be encrypted with Gamma-mode\n");
+	std::string Data;
+	std::cin >> Data;
+
+	printf("Ciphertext:%s\n", Gost.ChainGammate(Data, DataBlock(Gamma), false).c_str());
+}
+
+void ChainGammaDecryptInterface(GOST28147& Gost)
+{
+	printf("Write 64bit in ASCII representation of Initial Vector, to be used in ChainGamma-encryption\n");
+	std::string Gamma;
+	std::cin >> Gamma;
+
+	printf("Write ciphertext, to be decrypted with Gamma-mode\n");
+	std::string Data;
+	std::cin >> Data;
+
+	printf("Plaintext:%s\n", Gost.ChainGammate(Data, DataBlock(Gamma), true).c_str());
+}
+
+void HashInterface(GOST28147& Gost)
+{
+	printf("Write string of any lenght, to be hashed\n");
+	std::string Input;
+	std::cin >> Input;
+
+	printf("Write how many bits should be left from hash (1-64)\n");
+	std::string HashSize;
+	std::cin >> HashSize;
+	printf("Hash:%s\n", Gost.DoHash(Input, std::stol(HashSize)).c_str());
+}
+
 
 int main()
 {
-	//Tests
-	assert(TestCase1());
-	assert(TestCase2());
-	assert(TestCase3());
-	assert(TestCase4());
-	assert(TestCase5());
-	assert(TestCase6());
-
 	GOST28147 Cipher;
-	DataBlock DBL("gribheox");
-
-	SetRFC4357ReplaceBlock(Cipher);	
+	SetRFC4357ReplaceBlock(Cipher);
 	Cipher.SetKey(KeyHolder("1324adewxhvj8469kjgyxcshujgvjuyd"));
-	printf("KEY:%s\n", Cipher.getKey().toStr().c_str());
 
-	auto ResStr = Cipher.SRMode_Decode(Cipher.SRMode_Encode("Blue shadows on a blue water"));
+	while (true)
+	{
+		printf("Wellcome to GOST!\n");
+		printf("What should be done?\n");
 
+		printf("1)Set ReplaceBlock according to RFC4357\n");
+		printf("2)Set ReplaceBlock from sring\n");
+		printf("3)Set Key from string\n");
 
-	auto ResStr2 = Cipher.Gammate(Cipher.Gammate("Blue shadows on a blue water", DataBlock("6741gfes")), DataBlock("6741gfes"));
+		printf("   !WARNING - following action showld be performed, only when Key and ReplaceBlock is set!\n");
 
+		printf("4)Encrypt from string, using SimpleReplacement mode\n");
+		printf("5)Decrypt from string, using SimpleReplacement mode\n");
 
-	auto ResStr3 = Cipher.ChainGammate(Cipher.ChainGammate("Is it Realy Working? Eh?", DataBlock("6741gfes"), false), DataBlock("6741gfes"), true);
+		printf("6)Gammate string\n");
 
-	auto StrResHash = Cipher.DoHash("Is it Realy Working? Eh?", 32);
-	auto ResEqual = Cipher.DoHash("Is it Realy Working? Eh?", 32) == Cipher.DoHash("Is it Realy Working? Eh?", 32);
-	
-	printf("ORIGINAL  : %s\n", DBL.ToString().c_str());
-	auto CipherText = Cipher.DoCipher(DBL);
-	printf("CIPHERTEXT: %s\n", CipherText.ToString().c_str());
-	auto Decipher = Cipher.DoDecipher(CipherText);
-	printf("DECIPHER  : %s\n", Decipher.ToString().c_str());
+		printf("7)Encrypt from string, using ChainGammation mode\n");
+		printf("8)Decrypt from string, using ChainGammation mode\n");
+
+		printf("9)Get hash from string\n");
+
+		printf("q)Exit\n");
+
+		printf("--------------------\n\n\n");
+
+		char Result = getch();
+		switch (Result)
+		{
+			case 'q': return 0;
+			case '1': {SetReplaceBlockInterface(Cipher); break;}
+			case '2': {SetReplaceBlockFromStringInterface(Cipher); break;}
+			case '3': {SetKeyInterface(Cipher); break;}
+			case '4': {EncryptSRInterface(Cipher); break;}
+			case '5': {DecryptSRInterface(Cipher); break;}
+			case '6': {GammaInterface(Cipher); break;}
+			case '7': {ChainGammaEncryptInterface(Cipher); break;}
+			case '8': {ChainGammaDecryptInterface(Cipher); break;}
+			case '9': {HashInterface(Cipher); break;}
+			default: {break;}
+		}
+	}
     return 0;
 }
 
