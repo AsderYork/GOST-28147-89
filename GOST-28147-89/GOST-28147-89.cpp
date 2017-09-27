@@ -17,6 +17,12 @@ inline std::bitset<32> Rot11(std::bitset<32> Val)
 	return (Val << 11) | (Val >> 21);
 }
 
+inline std::bitset<32> Sum2321(std::bitset<32> Val1, std::bitset<32> Val2)
+{
+	//Addition by modulo (2^32)-1
+	return  std::bitset<32>(Val1.to_ullong() + Val2.to_ullong() % (long long)4294967295);
+}
+
 std::string GetRandomString(int size)
 {
 	std::string Str;
@@ -446,6 +452,81 @@ public:
 		return ResultString;
 	}
 
+	/**!
+	Creates one block of gamma-data based on Initialization Vector
+	\param[in] IV Initialization vector
+	\returns Returns a block of gamma-data
+	*/
+	DataBlock GetGammaBlock(DataBlock &IV, DataBlock& N3N4, bool FirstBlock)
+	{
+		DataBlock N1N2 = IV;
+		//Constants from GOST
+		FourByte C1(std::bitset<32>(33686024)), C2(std::bitset<32>(33686018));
+		//Perform SimpleReplacement on IV
+		if (FirstBlock)
+		{//If it's first block, then before actual part, we must ReplaceBlock the IV;
+			N3N4 = DoCipher(N1N2);
+		}
+		//N4 Summates modulo 2^32-1 with C1
+		N3N4.Data[1] = Sum2321(N3N4.Data[1].toBitset(), C1.toBitset());
+		//N3 Summates modulo 2^32 with C2
+		N3N4.Data[0] = std::bitset<32>((N3N4.Data[0].toBitset().to_ullong() + C2.toBitset().to_ullong()));
+
+		N1N2 = N3N4;
+
+		N1N2 = DoCipher(N1N2);
+
+		IV = N1N2;
+
+		return N1N2;
+	}
+
+	/**
+	Performs gammation over a string of data, using setted Key, ReplacementBlock and Initial Vector
+	*/
+	std::string Gammate(std::string Data, DataBlock IV)
+	{
+		std::string ResultString;
+		//How many blocks we need?
+		int BlockNumber = Data.size() / 8;
+		
+		DataBlock N3N4Registers;
+		bool FirstBlock = true;//Controlling first block
+		for (int i = 0; i < BlockNumber; i++)
+		{		
+			DataBlock ReturnedGamma = GetGammaBlock(IV, N3N4Registers, FirstBlock);
+			if (FirstBlock) { FirstBlock = false; }
+
+			DataBlock ResultData;
+			auto InputDataBlock = DataBlock(Data.substr(i*8, 8));
+			ResultData.Data[0] = InputDataBlock.Data[0].toBitset() ^ ReturnedGamma.Data[0].toBitset();
+			ResultData.Data[1] = InputDataBlock.Data[1].toBitset() ^ ReturnedGamma.Data[1].toBitset();
+
+			ResultString += ResultData.ToString();
+		}
+
+
+		//And if there some leftout, do another block!
+		if (Data.size() % 8 != 0) {
+
+			DataBlock ReturnedGamma = GetGammaBlock(IV, N3N4Registers, FirstBlock);
+			auto InputDataStrToBeAugmented = Data.substr((Data.size() / 8)*8, 8);
+			for (int i = 0; i < Data.size() % 8; i++) { InputDataStrToBeAugmented += ' '; }
+			DataBlock InputDataBlock(InputDataStrToBeAugmented);
+
+			DataBlock ResultData;
+			//Just for simplicity, Add complete InputDataBlock to 8 chars, so that we could perform XOR normally
+			ResultData.Data[0] = InputDataBlock.Data[0].toBitset() ^ ReturnedGamma.Data[0].toBitset();
+			ResultData.Data[1] = InputDataBlock.Data[1].toBitset() ^ ReturnedGamma.Data[1].toBitset();
+
+			for (int i = 0; i < Data.size() % 8; i++)
+			{
+				ResultString += ResultData.Data[i / 4].byte[i % 4];
+			}
+		}
+		return ResultString;
+	}
+
 };
 
 void SetRFC4357ReplaceBlock(GOST28147& GOST)
@@ -643,6 +724,9 @@ int main()
 	printf("KEY:%s\n", Cipher.getKey().toStr().c_str());
 
 	auto ResStr = Cipher.SRMode_Decode(Cipher.SRMode_Encode("Blue shadows on a blue water"));
+
+
+	auto ResStr2 = Cipher.Gammate(Cipher.Gammate("Blue shadows on a blue water", DataBlock("6741gfes")), DataBlock("6741gfes"));
 	
 	printf("ORIGINAL  : %s\n", DBL.ToString().c_str());
 	auto CipherText = Cipher.DoCipher(DBL);
