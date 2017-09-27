@@ -483,6 +483,9 @@ public:
 
 	/**
 	Performs gammation over a string of data, using setted Key, ReplacementBlock and Initial Vector
+	\param[in] Data A data to gammate over. Plaintext becames ciphertext. Ciphertext becames Plaintext. Sun and Moon, Yin and Yang.
+	\param[in] IV Inintial Vector. Must be identical in encrypt/decrypt pair
+	\return Returns a gammated version of input data
 	*/
 	std::string Gammate(std::string Data, DataBlock IV)
 	{
@@ -527,6 +530,43 @@ public:
 		return ResultString;
 	}
 
+	/**!
+	Performs chained gammation, using setted Key, ReplacementBlock and Initial Vector
+	\param[in] Data A data to gammate over.
+	\param[in] IV Inintial Vector. Must be identical in encrypt/decrypt pair
+	\param[in] Decrypt If set to true, method will decrypt, otherwise it's encrypting
+	*/
+	std::string ChainGammate(std::string Data, DataBlock IV, bool Decrypt)
+	{
+
+		std::string ResultString;
+		//How many blocks we need?
+		int BlockNumber = Data.size() / 8;
+		std::string DataCopy(Data);
+		DataBlock N1N2 = IV;
+		if (Data.size() % 8 != 0)
+		{
+			for (int i = 0; i < 8 - Data.size() % 8; i++) { DataCopy += ' '; }
+			BlockNumber++;
+		}
+
+		N1N2 = DoCipher(N1N2);
+		for (int i = 0; i < BlockNumber; i++)
+		{
+			DataBlock ResultData;
+			auto InputDataBlock = DataBlock(DataCopy.substr(i * 8, 8));
+			
+			ResultData.Data[0] = InputDataBlock.Data[0].toBitset() ^ N1N2.Data[0].toBitset();
+			ResultData.Data[1] = InputDataBlock.Data[1].toBitset() ^ N1N2.Data[1].toBitset();
+			
+			Decrypt ? N1N2 = InputDataBlock : N1N2 = ResultData;
+
+
+			ResultString += ResultData.ToString();
+		}
+
+		return ResultString.substr(0, Data.size());
+	}
 };
 
 void SetRFC4357ReplaceBlock(GOST28147& GOST)
@@ -727,6 +767,9 @@ int main()
 
 
 	auto ResStr2 = Cipher.Gammate(Cipher.Gammate("Blue shadows on a blue water", DataBlock("6741gfes")), DataBlock("6741gfes"));
+
+
+	auto ResStr3 = Cipher.ChainGammate(Cipher.ChainGammate("Is it Realy Working? Eh?", DataBlock("6741gfes"), false), DataBlock("6741gfes"), true);
 	
 	printf("ORIGINAL  : %s\n", DBL.ToString().c_str());
 	auto CipherText = Cipher.DoCipher(DBL);
