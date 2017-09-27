@@ -261,29 +261,7 @@ public:
 		RB.SetValueInSubBlock(Value, subblock, position);
 	}
 
-	DataBlock InverseDataBlock(DataBlock Data)
-	{
-		DataBlock InvData;
-		std::bitset<32> N1, N2;
-		N1 = Data.Data[0].toBitset();
-		N2 = Data.Data[1].toBitset();
-
-		std::bitset<32> RetN1, RetN2;
-		for (int i = 0; i < 32; i++)
-		{
-			//RetN1[i] = N1[31 - i];
-			//RetN2[i] = N2[31 - i];
-
-			RetN1[i] = N1[i];
-			RetN2[i] = N2[i];
-
-		}
-		InvData.Data[0] = RetN1;
-		InvData.Data[1] = RetN2;
-		return InvData;
-	}
-
-	/**!
+		/**!
 	Performs one round of cipher.
 	\param[in] Data. Values of N1 and N2 registers
 	\param[in] KeyPart What key part should be used. Range:0-7; More about it in GOST
@@ -314,45 +292,56 @@ public:
 		return Data;
 	}
 
-	
+	/**!
+	Performs 16 first cycles of Encryption. This method is used in hashing
+	*/
+	DataBlock Do16Rounds(DataBlock Data)
+	{
+
+		for (int i = 0; i < 16; i++)
+		{//Through 1st up to 24th round,  Keys cyclically goes from 0 to 7
+			Data = DoRound(Data, i % 8, false);
+		}
+		return Data;
+	}
 	
 	DataBlock DoCipher(DataBlock Data)
 	{
 		//Invert input DataBlock
-		auto InvDTB = InverseDataBlock(Data);
+		auto DTB = Data;
 
 		for(int i = 0; i < 24; i++)
 		{//Through 1st up to 24th round,  Keys cyclically goes from 0 to 7
-			InvDTB = DoRound(InvDTB, i % 8, false);
+			DTB = DoRound(DTB, i % 8, false);
 		}
 		for (int i = 7; i > 0; i--)
 		{//Through 24st up to 33th round,  Keys goes from 7 to 1
-			InvDTB = DoRound(InvDTB, i, false);
+			DTB = DoRound(DTB, i, false);
 		}
 		//32th round goes with 0th part of a key, and with a flag, that it's a last round
-		InvDTB = DoRound(InvDTB, 0, true);
+		DTB = DoRound(DTB, 0, true);
 		
-		return InvDTB;
+		return DTB;
 	}
 
 	DataBlock DoDecipher(DataBlock Data)
 	{
 		//Invert input DataBlock
-		auto InvDTB = InverseDataBlock(Data);
+		auto DTB = Data;
 
 		for (int i = 0; i < 8; i++)
 		{//Through 1st up to 8th round,  Keys cyclically goes from 0 to 8
-			InvDTB = DoRound(InvDTB, i % 8, false);
+			DTB = DoRound(DTB, i % 8, false);
 		}
 
 		for (int i = 0; i < 23; i++)
 		{//Through 9st up to 31th round,  Keys cyclically goes from 8 to 0
-			InvDTB = DoRound(InvDTB, 7-(i % 8), false);
+			DTB = DoRound(DTB, 7-(i % 8), false);
 		}
 		//And the last one
-		InvDTB = DoRound(InvDTB, 0, true);
+		DTB = DoRound(DTB, 0, true);
 
-		return InvDTB;
+		return DTB;
 	}
 
 	void SetReplaceBlockFromString(std::string Str)
@@ -567,6 +556,39 @@ public:
 
 		return ResultString.substr(0, Data.size());
 	}
+
+
+
+	std::string DoHash(std::string Data, int BitSize)
+	{
+		assert(BitSize > 0 && BitSize <= 64);
+		int BlockNumber = Data.size() / 8;
+		std::string DataCopy(Data);
+		if (Data.size() % 8 != 0)
+		{
+			for (int i = 0; i < 8 - Data.size() % 8; i++) { DataCopy += ' '; }
+			BlockNumber++;
+		}
+
+		assert(BlockNumber > 2);//Even GOST says, that Hashing less then 64*3 bits of data is a tabo
+
+		DataBlock N1N2 = DataCopy.substr(0, 8);
+		for (int i = 1; i < BlockNumber - 1; i++)
+		{
+			N1N2 = Do16Rounds(N1N2);
+			N1N2.Data[0] = DataBlock(DataCopy.substr(i * 8, 8)).Data[0].toBitset() ^ N1N2.Data[0].toBitset();
+			N1N2.Data[1] = DataBlock(DataCopy.substr(i * 8, 8)).Data[1].toBitset() ^ N1N2.Data[1].toBitset();
+		}
+		//Last Block
+		N1N2.Data[0] = DataBlock(DataCopy.substr((BlockNumber - 1) * 8, 8)).Data[0].toBitset() ^ N1N2.Data[0].toBitset();
+		N1N2.Data[1] = DataBlock(DataCopy.substr((BlockNumber - 1) * 8, 8)).Data[1].toBitset() ^ N1N2.Data[1].toBitset();
+		N1N2 = Do16Rounds(N1N2);
+
+		auto P1 = (std::bitset<64>(N1N2.Data[0].toBitset().to_ullong()) << 32).to_ullong() + N1N2.Data[1].toBitset().to_ullong();
+
+		return std::bitset<64>(P1).to_string().substr(0, BitSize);
+		
+	}
 };
 
 void SetRFC4357ReplaceBlock(GOST28147& GOST)
@@ -770,6 +792,9 @@ int main()
 
 
 	auto ResStr3 = Cipher.ChainGammate(Cipher.ChainGammate("Is it Realy Working? Eh?", DataBlock("6741gfes"), false), DataBlock("6741gfes"), true);
+
+	auto StrResHash = Cipher.DoHash("Is it Realy Working? Eh?", 32);
+	auto ResEqual = Cipher.DoHash("Is it Realy Working? Eh?", 32) == Cipher.DoHash("Is it Realy Working? Eh?", 32);
 	
 	printf("ORIGINAL  : %s\n", DBL.ToString().c_str());
 	auto CipherText = Cipher.DoCipher(DBL);
