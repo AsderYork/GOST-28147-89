@@ -363,6 +363,89 @@ public:
 		}
 	}
 
+	/**!
+	Encrypts a string of data.
+	Key and ReplaceBlock must be set before any cryptographic operations!
+	\param[in] Data A string of data, to be encrypted
+	\returns Returns encrypted string
+	*/
+	std::string SRMode_Encode(std::string Data)
+	{
+		//First 8 bytes encode size of string
+		DataBlock SizeBlock;
+		
+		{
+			auto SizeBitRep = std::bitset<64>(Data.size());
+			std::bitset<32> FirstPart, SecondPart;
+			for (int i = 0; i < 32; i++)
+			{
+				FirstPart[i] = SizeBitRep[i];
+				//SecondPart[i] = SizeBitRep[32 + i];
+			}
+			SizeBlock.Data[0] = FirstPart;
+			SizeBlock.Data[1] = SecondPart;
+		}
+		
+		std::string ResultString;
+
+		ResultString += DoCipher(SizeBlock).ToString();
+
+		//Fill Data untill so that it can be evenly distributed between blocks
+		std::string DataToEncode = Data;
+		while (DataToEncode.size() % 8 != 0) { DataToEncode += ' '; }
+
+		DataBlock DataBlock;
+		//Every block contains 8 characters.
+		for (int i = 0; i < DataToEncode.size(); i+=8)
+		{
+			
+			DataBlock = DataToEncode.substr(i, 8);
+			
+
+			ResultString += DoCipher(DataBlock).ToString();
+		}
+
+		return ResultString;
+	}
+
+	/**!
+	Decrypts a string of data.
+	Key and ReplaceBlock must be set before any cryptographic operations!
+	\param[in] Data A string of cipher, to be encrypted. A string must be prepared exclusively by analogous cryptographic system!
+	\returns Returns decrypted string
+	*/
+	std::string SRMode_Decode(std::string Cipher)
+	{
+		//First 8 bytes Decode size of string
+		DataBlock SizeBlock;
+		SizeBlock = DoDecipher(Cipher.substr(0, 8));
+
+		int OverallStringSize = 0;
+		{
+			std::bitset<64> SizeBitRep;
+			for (int i = 0; i < 32; i++)
+			{				
+				SizeBitRep[i] = SizeBlock.Data[0].toBitset()[i];
+				SizeBitRep[32 + i] = SizeBlock.Data[1].toBitset()[i];
+			}
+			OverallStringSize = SizeBitRep.to_ullong();
+		}
+		
+
+		std::string ResultString;
+
+		DataBlock DataBlock;
+		//Every block contains 8 characters. And the first of them we allready processed. It contained String Size
+		for (int i = 8; i < Cipher.size(); i += 8)
+		{
+			DataBlock = Cipher.substr(i, 8);
+			ResultString += DoDecipher(DataBlock).ToString();
+		}
+		//Leave only actual data!
+		ResultString = ResultString.substr(0, OverallStringSize);
+		return ResultString;
+	}
+
 };
 
 void SetRFC4357ReplaceBlock(GOST28147& GOST)
@@ -558,6 +641,8 @@ int main()
 	SetRFC4357ReplaceBlock(Cipher);	
 	Cipher.SetKey(KeyHolder("1324adewxhvj8469kjgyxcshujgvjuyd"));
 	printf("KEY:%s\n", Cipher.getKey().toStr().c_str());
+
+	auto ResStr = Cipher.SRMode_Decode(Cipher.SRMode_Encode("Blue shadows on a blue water"));
 	
 	printf("ORIGINAL  : %s\n", DBL.ToString().c_str());
 	auto CipherText = Cipher.DoCipher(DBL);
